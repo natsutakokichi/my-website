@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>献立プランナー</title>
+    <style>
+      :root {
+        --color-primary: #D8A47F;
+        --color-primary-hover: #c48e68;
+        --color-bg: #faf8f6;
+        --color-surface: #fff;
+        --color-text: #1a1a1a;
+        --color-text-secondary: #6b7280;
+        --color-main-dish: #F05D5E;
+        --color-side-dish: #4ead5b;
+        --color-soup: #3b82f6;
+        --color-accent: #F05D5E;
+        --color-border: #eee;
+        --radius: 10px;
+        --radius-pill: 999px;
+        --shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+      }
+      *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+      body {
+        -webkit-font-smoothing: antialiased;
+        font-family: "Hiragino Kaku Gothic ProN", "Noto Sans JP", sans-serif;
+        background: var(--color-bg);
+        color: var(--color-text);
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
