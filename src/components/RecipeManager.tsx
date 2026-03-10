@@ -46,6 +46,7 @@ function formatSeasonMonths(months?: number[]): string {
 export function RecipeManager() {
   const [allRecipes, setAllRecipes] = useState<Recipe[]>(getAllRecipes);
   const [editingRecipe, setEditingRecipe] = useState<Recipe | null>(null);
+  const [openCategories, setOpenCategories] = useState<Set<string>>(new Set());
   const [name, setName] = useState("");
   const [category, setCategory] = useState<Category>("主菜");
   const [mainType, setMainType] = useState<MainType>("肉");
@@ -62,6 +63,15 @@ export function RecipeManager() {
   }, []);
 
   const sortedRecipes = useMemo(() => sortRecipes(allRecipes), [allRecipes]);
+
+  const toggleCategory = (cat: string) => {
+    setOpenCategories((prev) => {
+      const next = new Set(prev);
+      if (next.has(cat)) next.delete(cat);
+      else next.add(cat);
+      return next;
+    });
+  };
 
   const resetForm = () => {
     setName("");
@@ -329,59 +339,68 @@ export function RecipeManager() {
       {(["主菜", "副菜", "汁物"] as const).map((cat) => {
         const group = sortedRecipes.filter((r) => r.category === cat);
         if (group.length === 0) return null;
+        const isOpen = openCategories.has(cat);
         return (
           <section key={cat} className={styles.list}>
-            <h3
-              className={styles.sectionTitle}
+            <button
+              className={styles.accordionHeader}
               style={{ color: categoryBadgeColor[cat]?.color }}
+              onClick={() => toggleCategory(cat)}
             >
-              {cat}
-              <span className={styles.listCount}>{group.length}件</span>
-            </h3>
-            <div className={styles.cardGrid}>
-              {group.map((r) => (
-                <div key={r.id} className={styles.card}>
-                  <div className={styles.cardHeader}>
-                    <span
-                      className={styles.listCategory}
-                      style={{
-                        background: categoryBadgeColor[r.category]?.bg,
-                        color: categoryBadgeColor[r.category]?.color,
-                      }}
-                    >{r.category}</span>
-                    {r.mainType && (
-                      <span className={styles.listMainType}>{r.mainType}</span>
+              <span className={styles.accordionTitle}>
+                {cat}
+                <span className={styles.listCount}>{group.length}件</span>
+              </span>
+              <span className={`${styles.accordionArrow} ${isOpen ? styles.accordionArrowOpen : ""}`}>
+                ▸
+              </span>
+            </button>
+            {isOpen && (
+              <div className={styles.cardGrid}>
+                {group.map((r) => (
+                  <div key={r.id} className={styles.card}>
+                    <div className={styles.cardHeader}>
+                      <span
+                        className={styles.listCategory}
+                        style={{
+                          background: categoryBadgeColor[r.category]?.bg,
+                          color: categoryBadgeColor[r.category]?.color,
+                        }}
+                      >{r.category}</span>
+                      {r.mainType && (
+                        <span className={styles.listMainType}>{r.mainType}</span>
+                      )}
+                      <span className={styles.listSeason}>
+                        {formatSeasonMonths(r.seasonMonths)}
+                      </span>
+                    </div>
+                    <span className={styles.cardName}>{r.name}</span>
+                    {r.ingredients.length > 0 && (
+                      <span className={styles.cardIngredients}>
+                        {r.ingredients.join("、")}
+                      </span>
                     )}
-                    <span className={styles.listSeason}>
-                      {formatSeasonMonths(r.seasonMonths)}
-                    </span>
+                    {r.description && (
+                      <span className={styles.cardDescription}>{r.description}</span>
+                    )}
+                    <div className={styles.cardActions}>
+                      <button
+                        className={styles.editButton}
+                        onClick={() => setEditingRecipe(r)}
+                      >
+                        編集
+                      </button>
+                      <button
+                        className={styles.deleteButton}
+                        onClick={() => handleDelete(r.id)}
+                      >
+                        削除
+                      </button>
+                    </div>
                   </div>
-                  <span className={styles.cardName}>{r.name}</span>
-                  {r.ingredients.length > 0 && (
-                    <span className={styles.cardIngredients}>
-                      {r.ingredients.join("、")}
-                    </span>
-                  )}
-                  {r.description && (
-                    <span className={styles.cardDescription}>{r.description}</span>
-                  )}
-                  <div className={styles.cardActions}>
-                    <button
-                      className={styles.editButton}
-                      onClick={() => setEditingRecipe(r)}
-                    >
-                      編集
-                    </button>
-                    <button
-                      className={styles.deleteButton}
-                      onClick={() => handleDelete(r.id)}
-                    >
-                      削除
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </section>
         );
       })}
