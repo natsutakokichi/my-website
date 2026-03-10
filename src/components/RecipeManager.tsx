@@ -1,11 +1,14 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef, useMemo } from "react";
 import type { Category, MainType, Recipe } from "../types";
 import {
-  getCustomRecipes,
+  getAllRecipes,
   addCustomRecipe,
-  updateCustomRecipe,
-  deleteCustomRecipe,
+  addCustomRecipes,
+  updateRecipe,
+  deleteRecipe,
 } from "../data/recipeStore";
+import { parseCSV, parseJSON } from "../utils/importParser";
+import { EditModal } from "./EditModal";
 import styles from "./RecipeManager.module.css";
 
 const categoryBadgeColor: Record<string, { bg: string; color: string }> = {
@@ -20,15 +23,29 @@ const MONTH_LABELS = [
   "7月", "8月", "9月", "10月", "11月", "12月",
 ];
 
+const CATEGORY_ORDER: Record<string, number> = { "主菜": 0, "副菜": 1, "汁物": 2 };
+const MAIN_TYPE_ORDER: Record<string, number> = { "肉": 0, "魚": 1 };
+
+function sortRecipes(recipes: Recipe[]): Recipe[] {
+  return [...recipes].sort((a, b) => {
+    const catA = CATEGORY_ORDER[a.category] ?? 9;
+    const catB = CATEGORY_ORDER[b.category] ?? 9;
+    if (catA !== catB) return catA - catB;
+    const mtA = MAIN_TYPE_ORDER[a.mainType ?? ""] ?? 9;
+    const mtB = MAIN_TYPE_ORDER[b.mainType ?? ""] ?? 9;
+    if (mtA !== mtB) return mtA - mtB;
+    return a.name.localeCompare(b.name, "ja");
+  });
+}
+
 function formatSeasonMonths(months?: number[]): string {
   if (!months || months.length === 0) return "通年";
   return months.map((m) => `${m}月`).join(", ");
 }
 
 export function RecipeManager() {
-  const [customRecipes, setCustomRecipes] = useState<Recipe[]>(getCustomRecipes);
-  const [visibleCount, setVisibleCount] = useState(10);
-  const [editingId, setEditingId] = useState<number | null>(null);
+  const [allRecipes, setAllRecipes] = useState<Recipe[]>(getAllRecipes);
+  const [editingRecipe, setEditingRecipe] = useState<Recipe | null>(null);
   const [name, setName] = useState("");
   const [category, setCategory] = useState<Category>("主菜");
   const [mainType, setMainType] = useState<MainType>("肉");
@@ -36,13 +53,17 @@ export function RecipeManager() {
   const [description, setDescription] = useState("");
   const [useSeason, setUseSeason] = useState(false);
   const [selectedMonths, setSelectedMonths] = useState<Set<number>>(new Set());
+  const [importPreview, setImportPreview] = useState<Omit<Recipe, "id">[]>([]);
+  const [importError, setImportError] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(() => {
-    setCustomRecipes(getCustomRecipes());
+    setAllRecipes(getAllRecipes());
   }, []);
 
+  const sortedRecipes = useMemo(() => sortRecipes(allRecipes), [allRecipes]);
+
   const resetForm = () => {
-    setEditingId(null);
     setName("");
     setCategory("主菜");
     setMainType("肉");
@@ -64,7 +85,8 @@ export function RecipeManager() {
     });
   };
 
-  const buildRecipeFields = () => {
+  const handleSubmit = () => {
+    if (!name.trim()) return;
     const ingredients = ingredientsText
       .split(/[,、\s]+/)
       .map((s) => s.trim())
@@ -73,61 +95,82 @@ export function RecipeManager() {
       useSeason && selectedMonths.size > 0
         ? [...selectedMonths].sort((a, b) => a - b)
         : undefined;
-    return {
+    addCustomRecipe({
       name: name.trim(),
       category,
       mainType: category === "主菜" ? mainType : undefined,
       seasonMonths,
       ingredients,
       description: description.trim(),
-    };
-  };
-
-  const handleSubmit = () => {
-    if (!name.trim()) return;
-    const fields = buildRecipeFields();
-
-    if (editingId !== null) {
-      updateCustomRecipe({ ...fields, id: editingId });
-    } else {
-      addCustomRecipe(fields);
-    }
+    });
     resetForm();
     refresh();
   };
 
-  const handleEdit = (recipe: Recipe) => {
-    setEditingId(recipe.id);
-    setName(recipe.name);
-    setCategory(recipe.category);
-    setMainType(recipe.mainType ?? "肉");
-    setIngredientsText(recipe.ingredients.join("、"));
-    setDescription(recipe.description);
-    if (recipe.seasonMonths && recipe.seasonMonths.length > 0) {
-      setUseSeason(true);
-      setSelectedMonths(new Set(recipe.seasonMonths));
-    } else {
-      setUseSeason(false);
-      setSelectedMonths(new Set());
-    }
-  };
-
-  const handleCancel = () => {
-    resetForm();
+  const handleEditSave = (updated: Recipe) => {
+    updateRecipe(updated);
+    refresh();
+    setEditingRecipe(null);
   };
 
   const handleDelete = (id: number) => {
-    deleteCustomRecipe(id);
-    if (editingId === id) resetForm();
+    deleteRecipe(id);
     refresh();
+  };
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setImportError("");
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const text = reader.result as string;
+        const recipes = file.name.endsWith(".csv")
+          ? parseCSV(text)
+          : parseJSON(text);
+        setImportPreview(recipes);
+      } catch (err) {
+        setImportError(
+          err instanceof Error ? err.message : "ファイルの読み込みに失敗しました"
+        );
+        setImportPreview([]);
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  };
+
+  const handleImportConfirm = () => {
+    if (importPreview.length === 0) return;
+    addCustomRecipes(importPreview);
+    setImportPreview([]);
+    setImportError("");
+    refresh();
+  };
+
+  const handleImportCancel = () => {
+    setImportPreview([]);
+    setImportError("");
+  };
+
+  const handleExport = () => {
+    const all = getAllRecipes();
+    const json = JSON.stringify(all, null, 2);
+    const blob = new Blob([json], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "recipes.json";
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   return (
     <div className={styles.container}>
       <section className={styles.form}>
-        <h3 className={styles.sectionTitle}>
-          {editingId !== null ? "レシピを編集" : "レシピを登録"}
-        </h3>
+        <h3 className={styles.sectionTitle}>レシピを登録</h3>
         <div className={styles.field}>
           <label className={styles.label}>レシピ名</label>
           <input
@@ -215,69 +258,139 @@ export function RecipeManager() {
             onClick={handleSubmit}
             disabled={!name.trim()}
           >
-            {editingId !== null ? "更新する" : "登録する"}
+            登録する
           </button>
-          {editingId !== null && (
-            <button className={styles.cancelButton} onClick={handleCancel}>
-              キャンセル
-            </button>
-          )}
         </div>
       </section>
 
-      {customRecipes.length > 0 && (
-        <section className={styles.list}>
-          <h3 className={styles.sectionTitle}>
-            登録済みレシピ
-            <span className={styles.listCount}>{customRecipes.length}件</span>
-          </h3>
-          {customRecipes.slice(0, visibleCount).map((r) => (
-            <div
-              key={r.id}
-              className={`${styles.listItem} ${editingId === r.id ? styles.listItemEditing : ""}`}
-            >
-              <div className={styles.listInfo}>
-                <span
-                  className={styles.listCategory}
-                  style={{
-                    background: categoryBadgeColor[r.category]?.bg,
-                    color: categoryBadgeColor[r.category]?.color,
-                  }}
-                >{r.category}</span>
-                {r.mainType && (
-                  <span className={styles.listMainType}>{r.mainType}</span>
-                )}
-                <span className={styles.listName}>{r.name}</span>
-                <span className={styles.listSeason}>
-                  {formatSeasonMonths(r.seasonMonths)}
-                </span>
-              </div>
-              <div className={styles.listActions}>
-                <button
-                  className={styles.editButton}
-                  onClick={() => handleEdit(r)}
-                >
-                  編集
-                </button>
-                <button
-                  className={styles.deleteButton}
-                  onClick={() => handleDelete(r.id)}
-                >
-                  削除
-                </button>
-              </div>
+      <section className={styles.importSection}>
+        <h3 className={styles.sectionTitle}>インポート / エクスポート</h3>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".csv,.json"
+          style={{ display: "none" }}
+          onChange={handleFileSelect}
+        />
+        <div className={styles.importActions}>
+          <button
+            className={styles.importButton}
+            onClick={() => fileInputRef.current?.click()}
+          >
+            ファイルを選択（CSV / JSON）
+          </button>
+          <button
+            className={styles.exportButton}
+            onClick={handleExport}
+          >
+            エクスポート（JSON）
+          </button>
+        </div>
+        {importError && (
+          <p className={styles.importError}>{importError}</p>
+        )}
+        {importPreview.length > 0 && (
+          <div className={styles.importPreview}>
+            <div className={styles.importPreviewList}>
+              {importPreview.map((r, i) => (
+                <div key={i} className={styles.importPreviewItem}>
+                  <span
+                    className={styles.listCategory}
+                    style={{
+                      background: categoryBadgeColor[r.category]?.bg,
+                      color: categoryBadgeColor[r.category]?.color,
+                    }}
+                  >{r.category}</span>
+                  {r.mainType && (
+                    <span className={styles.listMainType}>{r.mainType}</span>
+                  )}
+                  <span className={styles.listName}>{r.name}</span>
+                </div>
+              ))}
             </div>
-          ))}
-          {visibleCount < customRecipes.length && (
-            <button
-              className={styles.loadMoreButton}
-              onClick={() => setVisibleCount((v) => v + 10)}
+            <div className={styles.importActions}>
+              <button
+                className={styles.importConfirm}
+                onClick={handleImportConfirm}
+              >
+                {importPreview.length}件をインポート
+              </button>
+              <button
+                className={styles.importCancel}
+                onClick={handleImportCancel}
+              >
+                キャンセル
+              </button>
+            </div>
+          </div>
+        )}
+      </section>
+
+      {(["主菜", "副菜", "汁物"] as const).map((cat) => {
+        const group = sortedRecipes.filter((r) => r.category === cat);
+        if (group.length === 0) return null;
+        return (
+          <section key={cat} className={styles.list}>
+            <h3
+              className={styles.sectionTitle}
+              style={{ color: categoryBadgeColor[cat]?.color }}
             >
-              次へ（残り{customRecipes.length - visibleCount}件）
-            </button>
-          )}
-        </section>
-      )}
+              {cat}
+              <span className={styles.listCount}>{group.length}件</span>
+            </h3>
+            <div className={styles.cardGrid}>
+              {group.map((r) => (
+                <div key={r.id} className={styles.card}>
+                  <div className={styles.cardHeader}>
+                    <span
+                      className={styles.listCategory}
+                      style={{
+                        background: categoryBadgeColor[r.category]?.bg,
+                        color: categoryBadgeColor[r.category]?.color,
+                      }}
+                    >{r.category}</span>
+                    {r.mainType && (
+                      <span className={styles.listMainType}>{r.mainType}</span>
+                    )}
+                    <span className={styles.listSeason}>
+                      {formatSeasonMonths(r.seasonMonths)}
+                    </span>
+                  </div>
+                  <span className={styles.cardName}>{r.name}</span>
+                  {r.ingredients.length > 0 && (
+                    <span className={styles.cardIngredients}>
+                      {r.ingredients.join("、")}
+                    </span>
+                  )}
+                  {r.description && (
+                    <span className={styles.cardDescription}>{r.description}</span>
+                  )}
+                  <div className={styles.cardActions}>
+                    <button
+                      className={styles.editButton}
+                      onClick={() => setEditingRecipe(r)}
+                    >
+                      編集
+                    </button>
+                    <button
+                      className={styles.deleteButton}
+                      onClick={() => handleDelete(r.id)}
+                    >
+                      削除
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        );
+      })}
+
+      <EditModal
+        recipe={editingRecipe}
+        onSave={handleEditSave}
+        onClose={() => setEditingRecipe(null)}
+      />
     </div>
   );
 }
