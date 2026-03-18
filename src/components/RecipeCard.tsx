@@ -31,7 +31,14 @@ export function RecipeCard({ recipe, showDetails = false }: Props) {
         >
           {recipe.category}
         </span>
-        <span className={styles.name}>{recipe.name}</span>
+        <a
+          className={styles.name}
+          href={`https://www.google.com/search?q=${encodeURIComponent(recipe.name + " レシピ")}`}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          {recipe.name}
+        </a>
         <button
           className={`${styles.likeButton} ${liked ? styles.liked : ""}`}
           onClick={handleLike}

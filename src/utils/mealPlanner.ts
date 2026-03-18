@@ -1,4 +1,4 @@
-import type { Recipe, MealPlan, WeeklyMealPlan, MainType } from "../types";
+import type { Category, Recipe, MealPlan, WeeklyMealPlan, MainType } from "../types";
 import { getAllRecipes } from "../data/recipeStore";
 import { getLikedIds } from "../data/likeStore";
 import { expandSynonyms } from "./synonyms";
@@ -66,7 +66,7 @@ export function generateWeeklyMealPlan(
   const selectedSoups = pickNUniqueWeighted(soups, normalCount, likedIds);
 
   // 主菜: 肉魚交互
-  const startWithMeat = Math.random() < 0.5;
+  const startWithMeat = true;
   const meatCount = startWithMeat ? 4 : 3;
   const fishCount = 7 - meatCount;
 
@@ -159,40 +159,21 @@ export function generateWeeklyMealPlan(
 
 // --- 食材検索 ---
 
-function scoreByIngredients(recipe: Recipe, ingredients: string[]): number {
-  const expanded = ingredients.flatMap(expandSynonyms);
-  return recipe.ingredients.filter((ri) =>
-    expanded.some((syn) => ri.includes(syn) || syn.includes(ri))
-  ).length;
+export interface IngredientSearchResult {
+  label: string;
+  matched: boolean;
+  plan: MealPlan;
 }
 
-function pickMatched(
-  candidates: Recipe[],
-  ingredients: string[],
-  likedIds: Set<number>
-): Recipe | null {
-  const scored = candidates
-    .map((r) => ({
-      recipe: r,
-      score: scoreByIngredients(r, ingredients) * (likedIds.has(r.id) ? LIKE_WEIGHT : 1),
-    }))
-    .filter((s) => s.score > 0);
-
-  if (scored.length === 0) return null;
-
-  const total = scored.reduce((a, s) => a + s.score, 0);
-  let rand = Math.random() * total;
-  for (const s of scored) {
-    rand -= s.score;
-    if (rand <= 0) return s.recipe;
-  }
-  return scored[scored.length - 1].recipe;
+function usesIngredients(recipe: Recipe, expanded: string[]): boolean {
+  return recipe.ingredients.some((ri) =>
+    expanded.some((syn) => ri.includes(syn) || syn.includes(ri))
+  );
 }
 
 export function generateMealPlansByIngredients(
-  ingredients: string[],
-  count: number = 3
-): MealPlan[] {
+  ingredients: string[]
+): IngredientSearchResult[] {
   const recipes = getAllRecipes();
   const likedIds = getLikedIds();
   const allMains = recipes.filter((r) => r.category === "主菜" && isInSeason(r));
@@ -205,32 +186,43 @@ export function generateMealPlansByIngredients(
 
   if (trimmed.length === 0) return [];
 
-  const results: MealPlan[] = [];
-  const usedMainIds = new Set<number>();
-  const usedSideIds = new Set<number>();
-  const usedSoupIds = new Set<number>();
+  const expanded = trimmed.flatMap(expandSynonyms);
 
-  for (let i = 0; i < count; i++) {
-    const availableMains = allMains.filter((r) => !usedMainIds.has(r.id));
-    const availableSides = sideDishes.filter((r) => !usedSideIds.has(r.id));
-    const availableSoups = soups.filter((r) => !usedSoupIds.has(r.id));
+  const pools: { cat: Category; label: string; recipes: Recipe[] }[] = [
+    { cat: "主菜", label: "主菜で使う", recipes: allMains },
+    { cat: "副菜", label: "副菜で使う", recipes: sideDishes },
+    { cat: "汁物", label: "汁物で使う", recipes: soups },
+  ];
 
-    const main = pickMatched(availableMains, trimmed, likedIds);
-    const side = pickMatched(availableSides, trimmed, likedIds);
-    const soup = pickMatched(availableSoups, trimmed, likedIds);
+  return pools.map(({ cat, label, recipes: pool }) => {
+    const matched = pool.filter((r) => usesIngredients(r, expanded));
+    const notMatched = pool.filter((r) => !usesIngredients(r, expanded));
+    const hasMatch = matched.length > 0;
 
-    if (!main && !side && !soup) break;
+    // フォーカスカテゴリ: 食材にマッチするものを優先、なければ不使用のものを選出
+    const focusDish = hasMatch
+      ? weightedRandom(matched, likedIds)
+      : weightedRandom(notMatched.length > 0 ? notMatched : pool, likedIds);
 
-    results.push({
-      main: main ?? pickMatched(allMains, trimmed, likedIds) ?? weightedRandom(allMains, likedIds),
-      side: side ?? pickMatched(sideDishes, trimmed, likedIds) ?? weightedRandom(sideDishes, likedIds),
-      soup: soup ?? pickMatched(soups, trimmed, likedIds) ?? weightedRandom(soups, likedIds),
-    });
+    // 他カテゴリ: 入力食材を使用しないものを選出
+    const others: Partial<Record<Category, Recipe>> = {};
+    for (const other of pools) {
+      if (other.cat === cat) continue;
+      const avoid = other.recipes.filter((r) => !usesIngredients(r, expanded));
+      others[other.cat] = weightedRandom(
+        avoid.length > 0 ? avoid : other.recipes,
+        likedIds
+      );
+    }
 
-    if (main) usedMainIds.add(main.id);
-    if (side) usedSideIds.add(side.id);
-    if (soup) usedSoupIds.add(soup.id);
-  }
-
-  return results;
+    return {
+      label,
+      matched: hasMatch,
+      plan: {
+        main: cat === "主菜" ? focusDish : others["主菜"]!,
+        side: cat === "副菜" ? focusDish : others["副菜"]!,
+        soup: cat === "汁物" ? focusDish : others["汁物"]!,
+      },
+    };
+  });
 }
